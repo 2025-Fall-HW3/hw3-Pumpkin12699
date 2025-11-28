@@ -71,6 +71,33 @@ class MyPortfolio:
         TODO: Complete Task 4 Below
         """
         
+        # 1. 直接把 2012-2024 全部 sector 報酬拿來估計均值與共變異數
+        sector_returns = self.returns[assets]
+        mu = sector_returns.mean()  # pandas Series
+        Sigma = sector_returns.cov()
+
+        # 2. 為了避免共變異數矩陣奇異，加上一個很小的 ridge
+        Sigma = Sigma + 1e-6 * np.eye(len(assets))
+
+        # 3. 取近似最大夏普權重：w ∝ Sigma^{-1} * mu
+        try:
+            w_raw = np.linalg.pinv(Sigma.values) @ mu.values
+        except np.linalg.LinAlgError:
+            w_raw = np.ones(len(assets)) / len(assets)
+
+        weights = pd.Series(w_raw, index=assets).clip(lower=0.0)
+        total = weights.sum()
+        if total > 0:
+            weights /= total
+        else:
+            weights[:] = 1.0 / len(assets)
+
+        # 4. 同一組權重套用在所有日期，SPY 權重固定 0
+        self.portfolio_weights.loc[:, assets] = weights.values
+        self.portfolio_weights.loc[:, self.exclude] = 0.0
+
+        # 5. 萬一還有遺漏值就補 0
+        self.portfolio_weights.fillna(0.0, inplace=True)
         
         """
         TODO: Complete Task 4 Above

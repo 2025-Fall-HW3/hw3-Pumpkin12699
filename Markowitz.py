@@ -62,6 +62,17 @@ class EqualWeightPortfolio:
         """
         TODO: Complete Task 1 Below
         """
+        # Equal weight: each asset gets 1/n where n is the number of assets
+        n_assets = len(assets)
+        equal_weight = 1.0 / n_assets
+        
+        # Assign equal weights to all assets (excluding SPY) for all dates
+        for asset in assets:
+            self.portfolio_weights[asset] = equal_weight
+        
+        # Set excluded asset (SPY) to 0
+        if self.exclude in self.portfolio_weights.columns:
+            self.portfolio_weights[self.exclude] = 0.0
 
         """
         TODO: Complete Task 1 Above
@@ -104,18 +115,33 @@ class RiskParityPortfolio:
         self.lookback = lookback
 
     def calculate_weights(self):
-        # Get the assets by excluding the specified column
         assets = df.columns[df.columns != self.exclude]
 
-        # Calculate the portfolio weights
-        self.portfolio_weights = pd.DataFrame(index=df.index, columns=df.columns)
+        # Initialize portfolio weights with all assets (SPY column retained)
+        self.portfolio_weights = pd.DataFrame( index=df.index, columns=df.columns,
+        )
 
         """
         TODO: Complete Task 2 Below
         """
-
-
-
+        
+        for i in range(self.lookback + 1, len(df)):
+            # 1. Get the rolling returns for the lookback window (R_n)
+            R_n = df_returns.copy()[assets].iloc[i - self.lookback : i]
+            
+            # 2. Calculate the volatility (sigma_i)
+            volatilities = R_n.std()
+            
+            # 3. Calculate the Inverse Volatility (1 / sigma_i)
+            inverse_volatilities = 1 / np.maximum(volatilities, 1e-9)
+            
+            # 4. Calculate the normalized weights (wi = (1/sigma_i) / sum(1/sigma_j))
+            sum_inverse_volatilities = inverse_volatilities.sum()
+            normalized_weights = inverse_volatilities / sum_inverse_volatilities
+            
+            # 5. Assign the calculated weights to the current rebalance date
+            self.portfolio_weights.loc[df.index[i], assets] = normalized_weights.values
+        
         """
         TODO: Complete Task 2 Above
         """
@@ -170,6 +196,10 @@ class MeanVariancePortfolio:
             self.portfolio_weights.loc[df.index[i], assets] = self.mv_opt(
                 R_n, self.gamma
             )
+        
+        # Set excluded asset (SPY) to 0
+        if self.exclude in self.portfolio_weights.columns:
+            self.portfolio_weights[self.exclude] = 0.0
 
         self.portfolio_weights.ffill(inplace=True)
         self.portfolio_weights.fillna(0, inplace=True)
@@ -187,11 +217,18 @@ class MeanVariancePortfolio:
                 """
                 TODO: Complete Task 3 Below
                 """
-
-                # Sample Code: Initialize Decision w and the Objective
-                # NOTE: You can modify the following code
-                w = model.addMVar(n, name="w", ub=1)
-                model.setObjective(w.sum(), gp.GRB.MAXIMIZE)
+                # Decision variables: portfolio weights
+                w = model.addMVar(n, name="w", lb=0, ub=1)
+                
+                # Objective: maximize w^T * mu - (gamma/2) * w^T * Sigma * w
+                # This is equivalent to: w^T * mu - (gamma/2) * sum_i sum_j w_i * Sigma_ij * w_j
+                objective = mu @ w - (gamma / 2) * (w @ Sigma @ w)
+                model.setObjective(objective, gp.GRB.MAXIMIZE)
+                
+                # Constraint: sum of weights equals 1 (no leverage)
+                model.addConstr(w.sum() == 1, name="budget")
+                
+                # Long-only constraint is already handled by lb=0
 
                 """
                 TODO: Complete Task 3 Above
@@ -217,6 +254,9 @@ class MeanVariancePortfolio:
                         var = model.getVarByName(f"w[{i}]")
                         # print(f"w {i} = {var.X}")
                         solution.append(var.X)
+                else:
+                    # If optimization failed, return equal weights as fallback
+                    solution = [1.0 / n] * n
 
         return solution
 
